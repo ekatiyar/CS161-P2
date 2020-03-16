@@ -7,6 +7,8 @@ package proj2
 import (
 	// You neet to add with
 	// go get github.com/cs161-staff/userlib
+	"bytes"
+
 	"github.com/cs161-staff/userlib"
 
 	// Life is much easier with json:  You are
@@ -32,12 +34,11 @@ import (
 	// Optional. You can remove the "_" there, but please do not touch
 	// anything else within the import bracket.
 	_ "strconv"
-
 	// if you are looking for fmt, we don't give you fmt, but you can use userlib.DebugMsg.
 	// see someUsefulThings() below:
 )
 
-// This serves two purposes: 
+// This serves two purposes:
 // a) It shows you some useful primitives, and
 // b) it suppresses warnings for items not being imported.
 // Of course, this function can be deleted.
@@ -68,7 +69,7 @@ func someUsefulThings() {
 	// And a random RSA key.  In this case, ignoring the error
 	// return value
 	var pk userlib.PKEEncKey
-        var sk userlib.PKEDecKey
+	var sk userlib.PKEDecKey
 	pk, sk, _ = userlib.PKEKeyGen()
 	userlib.DebugMsg("Key is %v, %v", pk, sk)
 }
@@ -89,6 +90,30 @@ type User struct {
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
+	SymKey  []byte
+	private userlib.PKEDecKey
+}
+
+//Auth struct contains salts and hashed password
+type Auth struct {
+	Salt1  []byte
+	Salt2  []byte
+	Hashed []byte
+}
+
+//Wrap struct is a wrapper containing a user instance and an auth struct
+type Wrap struct {
+	EncUser []byte
+	Access  Auth
+}
+
+func bHashKDF(key []byte, purpose string) ([]byte, error) {
+	userkey, err := userlib.HashKDF(key, []byte(purpose))
+	if err != nil {
+		return nil, err
+	}
+	userkey = userkey[:16]
+	return userkey, err
 }
 
 // This creates a user.  It will only be called once for a user
@@ -104,24 +129,65 @@ type User struct {
 // keystore and the datastore functions in the userlib library.
 
 // You can assume the password has strong entropy, EXCEPT
-// the attackers may possess a precomputed tables containing 
+// the attackers may possess a precomputed tables containing
 // hashes of common passwords downloaded from the internet.
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
+	var salts Auth
 	userdataptr = &userdata
+
+	salts.Salt1 = userlib.RandomBytes(64)
+	salts.Salt2 = userlib.RandomBytes(64)
+	salts.Hashed = userlib.Argon2Key([]byte(password), salts.Salt1, uint32(16))
+
+	public, private, _ := userlib.PKEKeyGen()
+	err = userlib.KeystoreSet(username, public)
+	if err != nil {
+		return nil, err
+	}
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(16))
+	userdata.private = private
 	//End of toy implementation
+	muserdata, _ := json.Marshal(userdata)
+	userkey, _ := bHashKDF(userdata.SymKey, "user")
+	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
 
-	return &userdata, nil
+	var wrapper Wrap
+	wrapper.Access = salts
+	wrapper.EncUser = encuser
+
+	mwrapper, _ := json.Marshal(wrapper)
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), nil, uint32(16)))
+	userlib.DatastoreSet(wuuid, mwrapper)
+
+	return userdataptr, nil
 }
 
 // This fetches the user information from the Datastore.  It should
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), nil, uint32(16)))
+	mwrapper, found := userlib.DatastoreGet(wuuid)
+	if !found {
+		return nil, errors.New(strings.ToTitle("Username is incorrect!"))
+	}
+
+	var wrapper Wrap
+	json.Unmarshal(mwrapper, &wrapper)
+	salts := wrapper.Access
+
+	candidate := userlib.Argon2Key([]byte(password), salts.Salt1, uint32(16))
+	if !bytes.Equal(candidate, salts.Hashed) {
+		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
+	}
+	userkey, _ := bHashKDF(userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(16)), "user")
+	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
 	var userdata User
+	json.Unmarshal(muserdata, &userdata)
 	userdataptr = &userdata
 
 	return userdataptr, nil
@@ -129,7 +195,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 // This stores a file in the datastore.
 //
-// The plaintext of the filename + the plaintext and length of the filename 
+// The plaintext of the filename + the plaintext and length of the filename
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
