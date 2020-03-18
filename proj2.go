@@ -108,7 +108,7 @@ type Wrap struct {
 }
 
 func bHashKDF(key []byte, purpose string) ([]byte, error) {
-	userkey, err := userlib.HashKDF(key, []byte(purpose))
+	userkey, err := userlib.HashKDF(key[:16], []byte(purpose))
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	salts.Salt1 = userlib.RandomBytes(64)
 	salts.Salt2 = userlib.RandomBytes(64)
-	salts.Hashed = userlib.Argon2Key([]byte(password), salts.Salt1, uint32(16))
+	salts.Hashed = userlib.Argon2Key([]byte(password), salts.Salt1, uint32(128))
 
 	public, private, _ := userlib.PKEKeyGen()
 	err = userlib.KeystoreSet(username, public)
@@ -148,7 +148,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
-	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(16))
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128))
 	userdata.private = private
 	//End of toy implementation
 	muserdata, _ := json.Marshal(userdata)
@@ -160,7 +160,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	wrapper.EncUser = encuser
 
 	mwrapper, _ := json.Marshal(wrapper)
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), nil, uint32(16)))
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
 	userlib.DatastoreSet(wuuid, mwrapper)
 
 	return userdataptr, nil
@@ -170,7 +170,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), nil, uint32(16)))
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
 	mwrapper, found := userlib.DatastoreGet(wuuid)
 	if !found {
 		return nil, errors.New(strings.ToTitle("Username is incorrect!"))
@@ -180,11 +180,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	json.Unmarshal(mwrapper, &wrapper)
 	salts := wrapper.Access
 
-	candidate := userlib.Argon2Key([]byte(password), salts.Salt1, uint32(16))
+	candidate := userlib.Argon2Key([]byte(password), salts.Salt1, uint32(128))
 	if !bytes.Equal(candidate, salts.Hashed) {
 		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
 	}
-	userkey, _ := bHashKDF(userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(16)), "user")
+	userkey, _ := bHashKDF(userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128)), "user")
 	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
 	var userdata User
 	json.Unmarshal(muserdata, &userdata)
