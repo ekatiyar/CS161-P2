@@ -7,7 +7,6 @@ package proj2
 import (
 	// You neet to add with
 	// go get github.com/cs161-staff/userlib
-	"bytes"
 
 	"github.com/cs161-staff/userlib"
 
@@ -116,6 +115,42 @@ func bHashKDF(key []byte, purpose string) ([]byte, error) {
 	return userkey, err
 }
 
+func isEqual(one []byte, two []byte) bool {
+	if len(one) != len(two) {
+		return false
+	}
+	for i := range one {
+		if one[i] != two[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func dUser(username string) (wrapper Wrap, err error) {
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
+	mwrapper, found := userlib.DatastoreGet(wuuid)
+	if !found {
+		return wrapper, errors.New(strings.ToTitle("Username is invalid!"))
+	}
+	json.Unmarshal(mwrapper, &wrapper)
+	return wrapper, nil
+}
+
+func (userdata *User) refreshUser() error {
+	wrapper, err := dUser(userdata.Username)
+	if err != nil {
+		return err
+	}
+	userkey, _ := bHashKDF(userdata.SymKey, "user")
+	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
+	json.Unmarshal(muserdata, &userdata)
+	return nil
+}
+func (userdata *User) updateUser() {
+
+}
+
 // This creates a user.  It will only be called once for a user
 // (unless the keystore and datastore are cleared during testing purposes)
 
@@ -170,26 +205,26 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
-	mwrapper, found := userlib.DatastoreGet(wuuid)
-	if !found {
-		return nil, errors.New(strings.ToTitle("Username is incorrect!"))
-	}
+	var userdata User
+	userdataptr = &userdata
 
-	var wrapper Wrap
-	json.Unmarshal(mwrapper, &wrapper)
+	wrapper, err := dUser(username)
+	if err != nil {
+		return nil, err
+	}
 	salts := wrapper.Access
 
 	candidate := userlib.Argon2Key([]byte(password), salts.Salt1, uint32(128))
-	if !bytes.Equal(candidate, salts.Hashed) {
+	if !isEqual(candidate, salts.Hashed) {
 		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
 	}
-	userkey, _ := bHashKDF(userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128)), "user")
-	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
-	var userdata User
-	json.Unmarshal(muserdata, &userdata)
-	userdataptr = &userdata
 
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128))
+	userdata.Username = username
+	err = userdataptr.refreshUser()
+	if err != nil {
+		return nil, err
+	}
 	return userdataptr, nil
 }
 
