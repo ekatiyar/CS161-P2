@@ -183,7 +183,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
-	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128))
+	userdata.SymKey = userlib.Argon2Key([]byte(password), salts.Salt2, uint32(128))
 	userdata.private = private
 	//End of toy implementation
 	muserdata, _ := json.Marshal(userdata)
@@ -219,7 +219,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
 	}
 
-	userdata.SymKey = userlib.Argon2Key([]byte(username+password), salts.Salt2, uint32(128))
+	userdata.SymKey = userlib.Argon2Key([]byte(password), salts.Salt2, uint32(128))
 	userdata.Username = username
 	err = userdataptr.refreshUser()
 	if err != nil {
