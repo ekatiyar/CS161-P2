@@ -91,6 +91,7 @@ type User struct {
 	// be public (start with a capital letter)
 	SymKey  []byte
 	private userlib.PKEDecKey
+	files   map[string]File
 }
 
 //Auth struct contains salts and hashed password
@@ -104,6 +105,12 @@ type Auth struct {
 type Wrap struct {
 	EncUser []byte
 	Access  Auth
+}
+
+//File struct describes a stored file
+type File struct {
+	Uuidf uuid.UUID
+	Saltf []byte
 }
 
 func bHashKDF(key []byte, purpose string) ([]byte, error) {
@@ -147,8 +154,18 @@ func (userdata *User) refreshUser() error {
 	json.Unmarshal(muserdata, &userdata)
 	return nil
 }
-func (userdata *User) updateUser() {
+func (userdata *User) updateUser(salts Auth) {
+	muserdata, _ := json.Marshal(userdata)
+	userkey, _ := bHashKDF(userdata.SymKey, "user")
+	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
 
+	var wrapper Wrap
+	wrapper.Access = salts
+	wrapper.EncUser = encuser
+
+	mwrapper, _ := json.Marshal(wrapper)
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), []byte(userdata.Username), uint32(16)))
+	userlib.DatastoreSet(wuuid, mwrapper)
 }
 
 // This creates a user.  It will only be called once for a user
@@ -186,17 +203,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.SymKey = userlib.Argon2Key([]byte(password), salts.Salt2, uint32(128))
 	userdata.private = private
 	//End of toy implementation
-	muserdata, _ := json.Marshal(userdata)
-	userkey, _ := bHashKDF(userdata.SymKey, "user")
-	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
-
-	var wrapper Wrap
-	wrapper.Access = salts
-	wrapper.EncUser = encuser
-
-	mwrapper, _ := json.Marshal(wrapper)
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
-	userlib.DatastoreSet(wuuid, mwrapper)
+	userdataptr.updateUser(salts)
 
 	return userdataptr, nil
 }
@@ -233,9 +240,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // The plaintext of the filename + the plaintext and length of the filename
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
-
+	userdata.refreshUser()
 	//TODO: This is a toy implementation.
-	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	UUID, _ := uuid.FromBytes(userlib.Argon2Key([]byte(filename), []byte(userdata.Username), uint32(16)))
 	packaged_data, _ := json.Marshal(data)
 	userlib.DatastoreSet(UUID, packaged_data)
 	//End of toy implementation
