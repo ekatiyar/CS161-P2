@@ -85,6 +85,7 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 //File struct contains file data
 type File struct {
 	Data [][]byte
+	FMac [][]byte
 }
 
 //FileInfo struct describes a stored file
@@ -92,7 +93,6 @@ type FileInfo struct {
 	Fuuid  uuid.UUID
 	FKey   []byte
 	FCsalt []byte
-	FMac   [][]byte
 }
 
 // User structure defines a user record
@@ -102,9 +102,10 @@ type User struct {
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
-	SymKey  []byte
-	Private userlib.PKEDecKey
-	Files   map[string]FileInfo
+	SymKey    []byte
+	Private   userlib.PKEDecKey
+	Signature userlib.DSSignKey
+	Files     map[string]FileInfo
 }
 
 //Wrap struct is a wrapper containing a user instance and an auth struct
@@ -225,7 +226,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	wrapper.Hashed = userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(32))
 
 	public, private, _ := userlib.PKEKeyGen()
-	err = userlib.KeystoreSet(username, public)
+	sign, verify, _ := userlib.DSKeyGen()
+	err = userlib.KeystoreSet(string(username+"_enc"), public)
+	if err != nil {
+		return nil, err
+	}
+	err = userlib.KeystoreSet(string(username+"_sig"), verify)
 	if err != nil {
 		return nil, err
 	}
@@ -234,6 +240,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.Username = username
 	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
 	userdata.Private = private
+	userdata.Signature = sign
 	userdata.Files = make(map[string]FileInfo)
 	//End of toy implementation
 	userdataptr.setUser(wrapper)
@@ -275,15 +282,16 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	userdata.refreshUser()
 
 	var fileinfo FileInfo
+	var file File
+
 	fileinfo.FCsalt = userlib.RandomBytes(32)
 	fileinfo.FKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
 	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fileinfo.FKey, "fuuid"))
 	//TODO: This is a toy implementation.
 	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
 	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
-	fileinfo.FMac = append(fileinfo.FMac, fmac)
+	file.FMac = append(file.FMac, fmac)
 
-	var file File
 	file.Data = append(file.Data, encdata)
 	mfile, _ := json.Marshal(file)
 	var file2 File
@@ -311,7 +319,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
 	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
 	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
-	fileinfo.FMac = append(fileinfo.FMac, fmac)
+	file.FMac = append(file.FMac, fmac)
 
 	file.Data = append(file.Data, encdata)
 	mfile, _ := json.Marshal(file)
@@ -333,7 +341,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	}
 	for i, datapart := range file.Data {
 		fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), datapart)
-		if !userlib.HMACEqual(fmac, fileinfo.FMac[i]) {
+		if !userlib.HMACEqual(fmac, file.FMac[i]) {
 			return nil, errors.New(strings.ToTitle("File is corrupted"))
 		}
 		decdata := userlib.SymDec(bHashKDF(fileinfo.FKey, "file"), datapart)
