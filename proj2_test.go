@@ -65,7 +65,9 @@ func TestGet(t *testing.T) {
 		t.Error("Failed to get user", err)
 		return
 	}
-	if u1.Username != u2.Username {
+	username := u1.Username != u2.Username
+
+	if username {
 		t.Error("Failed to get correct user", err)
 	}
 
@@ -89,6 +91,30 @@ func TestStorage(t *testing.T) {
 		return
 	}
 	if !reflect.DeepEqual(v, v2) {
+		t.Error("Downloaded file is not the same", v, v2)
+		return
+	}
+}
+
+func TestAppend(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	vmore := []byte("!")
+	u.AppendFile("file1", vmore)
+	final := []byte("This is a test!")
+	v2, err2 := u.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
+		return
+	}
+	if !reflect.DeepEqual(final, v2) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
 	}
