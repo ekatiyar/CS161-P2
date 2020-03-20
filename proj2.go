@@ -220,9 +220,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var wrapper Wrap
 	userdataptr = &userdata
 
-	wrapper.Salt1 = userlib.RandomBytes(128)
-	wrapper.Salt2 = userlib.RandomBytes(128)
-	wrapper.Hashed = userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(128))
+	wrapper.Salt1 = userlib.RandomBytes(32)
+	wrapper.Salt2 = userlib.RandomBytes(32)
+	wrapper.Hashed = userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(32))
 
 	public, private, _ := userlib.PKEKeyGen()
 	err = userlib.KeystoreSet(username, public)
@@ -232,7 +232,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
-	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(128))
+	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
 	userdata.Private = private
 	userdata.Files = make(map[string]FileInfo)
 	//End of toy implementation
@@ -253,12 +253,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	candidate := userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(128))
+	candidate := userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(32))
 	if !isEqual(candidate, wrapper.Hashed) {
 		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
 	}
 
-	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(128))
+	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
 	userdata.Username = username
 	err = userdataptr.refreshUser()
 	if err != nil {
@@ -275,8 +275,8 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	userdata.refreshUser()
 
 	var fileinfo FileInfo
-	fileinfo.FCsalt = userlib.RandomBytes(128)
-	fileinfo.FKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(128))
+	fileinfo.FCsalt = userlib.RandomBytes(32)
+	fileinfo.FKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
 	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fileinfo.FKey, "fuuid"))
 	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), data)
 	fileinfo.FMac = append(fileinfo.FMac, fmac)
