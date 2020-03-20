@@ -278,10 +278,10 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	fileinfo.FCsalt = userlib.RandomBytes(32)
 	fileinfo.FKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
 	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fileinfo.FKey, "fuuid"))
-	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), data)
-	fileinfo.FMac = append(fileinfo.FMac, fmac)
 	//TODO: This is a toy implementation.
 	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
+	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
+	fileinfo.FMac = append(fileinfo.FMac, fmac)
 
 	var file File
 	file.Data = append(file.Data, encdata)
@@ -308,10 +308,10 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), data)
-	fileinfo.FMac = append(fileinfo.FMac, fmac)
 
 	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
+	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
+	fileinfo.FMac = append(fileinfo.FMac, fmac)
 
 	file.Data = append(file.Data, encdata)
 	mfile, _ := json.Marshal(file)
@@ -332,11 +332,11 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 		return nil, err
 	}
 	for i, datapart := range file.Data {
-		decdata := userlib.SymDec(bHashKDF(fileinfo.FKey, "file"), datapart)
-		fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), decdata)
+		fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), datapart)
 		if !userlib.HMACEqual(fmac, fileinfo.FMac[i]) {
 			return nil, errors.New(strings.ToTitle("File is corrupted"))
 		}
+		decdata := userlib.SymDec(bHashKDF(fileinfo.FKey, "file"), datapart)
 		data = append(data, decdata...)
 	}
 	return data, nil
