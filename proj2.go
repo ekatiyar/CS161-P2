@@ -91,7 +91,6 @@ type File struct {
 //FileInfo struct describes a stored file
 type FileInfo struct {
 	Fuuid  uuid.UUID
-	FKey   []byte
 	FCsalt []byte
 }
 
@@ -105,7 +104,7 @@ type User struct {
 	SymKey    []byte
 	Private   userlib.PKEDecKey
 	Signature userlib.DSSignKey
-	Files     map[string]FileInfo
+	Files     map[string]uuid.UUID
 }
 
 //Wrap struct is a wrapper containing a user instance and an auth struct
@@ -142,6 +141,29 @@ func dUser(username string) (wrapper Wrap, err error) {
 	json.Unmarshal(mwrapper, &wrapper)
 	return wrapper, nil
 }
+func dinfo(infouuid uuid.UUID) (fileinfo FileInfo, err error) {
+	minfo, ok := userlib.DatastoreGet(infouuid)
+	if !ok {
+		return fileinfo, errors.New(strings.ToTitle("File Info not found!"))
+	}
+	err = json.Unmarshal(minfo, &fileinfo)
+	if err != nil {
+		return fileinfo, err
+	}
+	return fileinfo, nil
+}
+func dfile(fuuid uuid.UUID) (file File, err error) {
+	mfile, ok := userlib.DatastoreGet(fuuid)
+	if !ok {
+		return file, errors.New(strings.ToTitle("File not found!"))
+	}
+	err = json.Unmarshal(mfile, &file)
+	if err != nil {
+		return file, err
+	}
+	return file, nil
+}
+
 func kUser(username string) (value userlib.PKEEncKey, err error) {
 	value, found := userlib.KeystoreGet(username)
 	if !found {
@@ -174,7 +196,6 @@ func (userdata *User) setUser(wrapper Wrap) {
 	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), []byte(userdata.Username), uint32(16)))
 	userlib.DatastoreSet(wuuid, mwrapper)
 }
-
 func (userdata *User) updateUser() error {
 	wrapper, err := dUser(userdata.Username)
 	if err != nil {
@@ -184,21 +205,21 @@ func (userdata *User) updateUser() error {
 	return nil
 }
 
-func (userdata *User) allFile(filename string) (fileinfo FileInfo, file File, err error) {
-	fileinfo, ok := userdata.Files[filename]
+func (userdata *User) allFile(filename string) (fileinfo FileInfo, file File, fKey []byte, err error) {
+	infouuid, ok := userdata.Files[filename]
 	if !ok {
-		return fileinfo, file, errors.New(strings.ToTitle("File not found!"))
+		return fileinfo, file, fKey, errors.New(strings.ToTitle("File not found!"))
 	}
-	//TODO: This is a toy implementation.
-	mfile, ok := userlib.DatastoreGet(fileinfo.Fuuid)
-	if !ok {
-		return fileinfo, file, errors.New(strings.ToTitle("File not found!"))
-	}
-	err = json.Unmarshal(mfile, &file)
+	fileinfo, err = dinfo(infouuid)
 	if err != nil {
-		return fileinfo, file, err
+		return fileinfo, file, fKey, err
 	}
-	return fileinfo, file, nil
+	file, err = dfile(fileinfo.Fuuid)
+	if err != nil {
+		return fileinfo, file, fKey, err
+	}
+	fKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
+	return fileinfo, file, fKey, nil
 }
 
 // This creates a user.  It will only be called once for a user
@@ -241,7 +262,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
 	userdata.Private = private
 	userdata.Signature = sign
-	userdata.Files = make(map[string]FileInfo)
+	userdata.Files = make(map[string]uuid.UUID)
 	//End of toy implementation
 	userdataptr.setUser(wrapper)
 
@@ -285,11 +306,12 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	var file File
 
 	fileinfo.FCsalt = userlib.RandomBytes(32)
-	fileinfo.FKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
-	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fileinfo.FKey, "fuuid"))
+	fKey := userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
+	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fKey, "fuuid"))
+
 	//TODO: This is a toy implementation.
-	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
-	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
+	encdata := userlib.SymEnc(bHashKDF(fKey, "file"), userlib.RandomBytes(16), data)
+	fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), encdata)
 	file.FMac = append(file.FMac, fmac)
 
 	file.Data = append(file.Data, encdata)
@@ -299,7 +321,11 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
 	//End of toy implementation
 
-	userdata.Files[filename] = fileinfo
+	infouuid, _ := uuid.FromBytes(bHashKDF(fKey, "infouuid"))
+	userdata.Files[filename] = infouuid
+	minfo, _ := json.Marshal(fileinfo)
+	userlib.DatastoreSet(infouuid, minfo)
+
 	userdata.updateUser()
 
 	return
@@ -312,19 +338,18 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // metadata you need.
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	userdata.refreshUser()
-	fileinfo, file, err := userdata.allFile(filename)
+	fileinfo, file, fKey, err := userdata.allFile(filename)
 	if err != nil {
 		return err
 	}
 
-	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
-	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), encdata)
+	encdata := userlib.SymEnc(bHashKDF(fKey, "file"), userlib.RandomBytes(16), data)
+	fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), encdata)
 	file.FMac = append(file.FMac, fmac)
 
 	file.Data = append(file.Data, encdata)
 	mfile, _ := json.Marshal(file)
 	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
-	userdata.Files[filename] = fileinfo
 	userdata.updateUser()
 
 	return nil
@@ -335,16 +360,16 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	userdata.refreshUser()
-	fileinfo, file, err := userdata.allFile(filename)
+	_, file, fKey, err := userdata.allFile(filename)
 	if err != nil {
 		return nil, err
 	}
 	for i, datapart := range file.Data {
-		fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "fmac"), datapart)
+		fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), datapart)
 		if !userlib.HMACEqual(fmac, file.FMac[i]) {
 			return nil, errors.New(strings.ToTitle("File is corrupted"))
 		}
-		decdata := userlib.SymDec(bHashKDF(fileinfo.FKey, "file"), datapart)
+		decdata := userlib.SymDec(bHashKDF(fKey, "file"), datapart)
 		data = append(data, decdata...)
 	}
 	return data, nil
