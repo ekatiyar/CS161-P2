@@ -22,11 +22,6 @@ func clear() {
 	userlib.KeystoreClear()
 }
 
-func TestMine(t *testing.T) {
-	clear()
-	someUsefulThings()
-}
-
 func TestInit(t *testing.T) {
 	clear()
 	t.Log("Initialization test")
@@ -47,9 +42,51 @@ func TestInit(t *testing.T) {
 	// You probably want many more tests here.
 }
 
+func TestDoubleInit(t *testing.T) {
+	clear()
+	t.Log("Initializing User twice test")
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	_, err = InitUser("alice", "fubar")
+	if err == nil {
+		t.Error("Failed to catch reinitialization")
+		return
+	}
+
+	_, err = InitUser("malice", "fubar")
+	if err != nil {
+		t.Error("Unique users can have the same password", err)
+		return
+	}
+}
+
+func TestInvalidInit(t *testing.T) {
+	clear()
+	t.Log("Initializing Invalid User")
+	_, err := InitUser("", "")
+	if err == nil {
+		t.Error("Failed to catch empty username and password")
+		return
+	}
+	_, err = InitUser("alice", "")
+	if err == nil {
+		t.Error("Failed to catch empty password")
+		return
+	}
+	_, err = InitUser("", "fubar")
+	if err == nil {
+		t.Error("Failed to catch empty username")
+		return
+	}
+}
+
 func TestGet(t *testing.T) {
 	clear()
-	t.Log("Initialization test")
+	t.Log("Get test")
 
 	// You can set this to false!
 	userlib.SetDebugStatus(true)
@@ -74,8 +111,66 @@ func TestGet(t *testing.T) {
 	t.Log("Get works!", u2)
 }
 
+func TestNilGet(t *testing.T) {
+	clear()
+	t.Log("Get nonexistent user test")
+	_, err := GetUser("alice", "fubar")
+	if err == nil {
+		t.Error("Failed to error")
+		return
+	}
+}
+
+func TestInvalidGet(t *testing.T) {
+	clear()
+	t.Log("Get test")
+
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	_, err = GetUser("", "")
+	if err == nil {
+		t.Error("Failed to catch empty username and password")
+		return
+	}
+	_, err = GetUser("alice", "")
+	if err == nil {
+		t.Error("Failed to catch empty password")
+		return
+	}
+	_, err = GetUser("", "fubar")
+	if err == nil {
+		t.Error("Failed to catch empty username")
+		return
+	}
+}
+
+func TestAdvGet(t *testing.T) {
+	clear()
+	t.Log("Get test")
+
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	malice, err := InitUser("malice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u = malice
+	malice = u
+}
+
 func TestStorage(t *testing.T) {
 	clear()
+	t.Log("Storage test")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)
@@ -98,6 +193,7 @@ func TestStorage(t *testing.T) {
 
 func TestAppend(t *testing.T) {
 	clear()
+	t.Log("Append test")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)
@@ -122,6 +218,7 @@ func TestAppend(t *testing.T) {
 
 func TestInvalidFile(t *testing.T) {
 	clear()
+	t.Log("Invalid File test")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)
@@ -137,6 +234,7 @@ func TestInvalidFile(t *testing.T) {
 
 func TestShare(t *testing.T) {
 	clear()
+	t.Log("Share test")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)

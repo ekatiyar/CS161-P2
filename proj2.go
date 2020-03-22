@@ -141,6 +141,7 @@ func dUser(username string) (wrapper Wrap, err error) {
 	json.Unmarshal(mwrapper, &wrapper)
 	return wrapper, nil
 }
+
 func dinfo(infouuid uuid.UUID) (fileinfo FileInfo, err error) {
 	minfo, ok := userlib.DatastoreGet(infouuid)
 	if !ok {
@@ -152,6 +153,7 @@ func dinfo(infouuid uuid.UUID) (fileinfo FileInfo, err error) {
 	}
 	return fileinfo, nil
 }
+
 func dfile(fuuid uuid.UUID) (file File, err error) {
 	mfile, ok := userlib.DatastoreGet(fuuid)
 	if !ok {
@@ -165,7 +167,15 @@ func dfile(fuuid uuid.UUID) (file File, err error) {
 }
 
 func kUser(username string) (value userlib.PKEEncKey, err error) {
-	value, found := userlib.KeystoreGet(username)
+	value, found := userlib.KeystoreGet(string(username + "_enc"))
+	if !found {
+		return value, errors.New(strings.ToTitle("Username is invalid!"))
+	}
+	return value, nil
+}
+
+func kSign(username string) (value userlib.DSVerifyKey, err error) {
+	value, found := userlib.KeystoreGet(string(username + "_sig"))
 	if !found {
 		return value, errors.New(strings.ToTitle("Username is invalid!"))
 	}
@@ -196,6 +206,7 @@ func (userdata *User) setUser(wrapper Wrap) {
 	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), []byte(userdata.Username), uint32(16)))
 	userlib.DatastoreSet(wuuid, mwrapper)
 }
+
 func (userdata *User) updateUser() error {
 	wrapper, err := dUser(userdata.Username)
 	if err != nil {
@@ -238,6 +249,14 @@ func (userdata *User) allFile(filename string) (fileinfo FileInfo, file File, fK
 // the attackers may possess a precomputed tables containing
 // hashes of common passwords downloaded from the internet.
 func InitUser(username string, password string) (userdataptr *User, err error) {
+	if username == "" || password == "" {
+		return userdataptr, errors.New(strings.ToTitle("Username and Password must not be empty"))
+	}
+	_, err = dUser(username)
+	if err == nil {
+		return userdataptr, errors.New(strings.ToTitle("Username already exists!"))
+	}
+
 	var userdata User
 	var wrapper Wrap
 	userdataptr = &userdata
@@ -273,6 +292,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
+	if username == "" || password == "" {
+		return userdataptr, errors.New(strings.ToTitle("Username and Password must not be empty"))
+	}
+
 	var userdata User
 	userdataptr = &userdata
 
