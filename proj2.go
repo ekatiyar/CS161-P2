@@ -263,7 +263,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	wrapper.Salt1 = userlib.RandomBytes(32)
 	wrapper.Salt2 = userlib.RandomBytes(32)
-	wrapper.Hashed = userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(32))
+	wrapper.Hashed = userlib.Argon2Key([]byte(username+password), wrapper.Salt1, uint32(32))
 
 	public, private, _ := userlib.PKEKeyGen()
 	sign, verify, _ := userlib.DSKeyGen()
@@ -278,7 +278,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
-	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(32))
 	userdata.Private = private
 	userdata.Signature = sign
 	userdata.Files = make(map[string]uuid.UUID)
@@ -304,12 +304,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	candidate := userlib.Argon2Key([]byte(password), wrapper.Salt1, uint32(32))
+	candidate := userlib.Argon2Key([]byte(username+password), wrapper.Salt1, uint32(32))
 	if !isEqual(candidate, wrapper.Hashed) {
 		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
 	}
 
-	userdata.SymKey = userlib.Argon2Key([]byte(password), wrapper.Salt2, uint32(32))
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(32))
 	userdata.Username = username
 	err = userdataptr.refreshUser()
 	if err != nil {
@@ -324,13 +324,14 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 	userdata.refreshUser()
+	fileinfo, _, fKey, err := userdata.allFile(filename)
+	if err != nil {
+		fileinfo.FCsalt = userlib.RandomBytes(32)
+		fKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
+		fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fKey, "fuuid"))
+	}
 
-	var fileinfo FileInfo
 	var file File
-
-	fileinfo.FCsalt = userlib.RandomBytes(32)
-	fKey := userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
-	fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fKey, "fuuid"))
 
 	//TODO: This is a toy implementation.
 	encdata := userlib.SymEnc(bHashKDF(fKey, "file"), userlib.RandomBytes(16), data)
