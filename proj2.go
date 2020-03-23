@@ -85,13 +85,13 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 //File struct contains file data
 type File struct {
 	Data [][]byte
-	FMac [][]byte
+	Mac  [][]byte
 }
 
 //FileInfo struct describes a stored file
 type FileInfo struct {
-	Fuuid  uuid.UUID
-	FCsalt []byte
+	Fuuid uuid.UUID
+	FKey  []byte
 }
 
 // User structure defines a user record
@@ -104,15 +104,16 @@ type User struct {
 	SymKey    []byte
 	Private   userlib.PKEDecKey
 	Signature userlib.DSSignKey
-	Files     map[string]uuid.UUID
+	FilesMap  uuid.UUID
 }
 
 //Wrap struct is a wrapper containing a user instance and an auth struct
 type Wrap struct {
-	Salt1   []byte
-	Salt2   []byte
-	Hashed  []byte
-	EncUser []byte //Encrypted User struct
+	Username string
+	Salt1    []byte
+	Salt2    []byte
+	Hashed   []byte
+	EncUser  []byte //Encrypted User struct
 }
 
 func isEqual(one []byte, two []byte) bool {
@@ -125,45 +126,6 @@ func isEqual(one []byte, two []byte) bool {
 		}
 	}
 	return true
-}
-
-func bHashKDF(key []byte, purpose string) []byte {
-	userkey, _ := userlib.HashKDF(key[:16], []byte(purpose))
-	return userkey[:16]
-}
-
-func dUser(username string) (wrapper Wrap, err error) {
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), []byte(username), uint32(16)))
-	mwrapper, found := userlib.DatastoreGet(wuuid)
-	if !found {
-		return wrapper, errors.New(strings.ToTitle("Username is invalid!"))
-	}
-	json.Unmarshal(mwrapper, &wrapper)
-	return wrapper, nil
-}
-
-func dinfo(infouuid uuid.UUID) (fileinfo FileInfo, err error) {
-	minfo, ok := userlib.DatastoreGet(infouuid)
-	if !ok {
-		return fileinfo, errors.New(strings.ToTitle("File Info not found!"))
-	}
-	err = json.Unmarshal(minfo, &fileinfo)
-	if err != nil {
-		return fileinfo, err
-	}
-	return fileinfo, nil
-}
-
-func dfile(fuuid uuid.UUID) (file File, err error) {
-	mfile, ok := userlib.DatastoreGet(fuuid)
-	if !ok {
-		return file, errors.New(strings.ToTitle("File not found!"))
-	}
-	err = json.Unmarshal(mfile, &file)
-	if err != nil {
-		return file, err
-	}
-	return file, nil
 }
 
 func kUser(username string) (value userlib.PKEEncKey, err error) {
@@ -182,55 +144,81 @@ func kSign(username string) (value userlib.DSVerifyKey, err error) {
 	return value, nil
 }
 
-func (userdata *User) refreshUser() error {
-	wrapper, err := dUser(userdata.Username)
-	if err != nil {
-		return err
-	}
-	userkey := bHashKDF(userdata.SymKey, "user")
-	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
-	err = json.Unmarshal(muserdata, &userdata)
-	if err != nil {
-		return err
-	}
-	return nil
+// bHashKDF runs HashKDF but outputs a 16-byte long slice
+func bHashKDF(key []byte, purpose string) []byte {
+	userkey, _ := userlib.HashKDF(key[:16], []byte(purpose))
+	return userkey[:16]
 }
 
-func (userdata *User) setUser(wrapper Wrap) {
-	muserdata, _ := json.Marshal(userdata)
-	userkey := bHashKDF(userdata.SymKey, "user")
-	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
-	wrapper.EncUser = encuser
-
-	mwrapper, _ := json.Marshal(wrapper)
-	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), []byte(userdata.Username), uint32(16)))
-	userlib.DatastoreSet(wuuid, mwrapper)
-}
-
-func (userdata *User) updateUser() error {
-	wrapper, err := dUser(userdata.Username)
-	if err != nil {
-		return err
+// dUser returns a wrapper given a username
+func dUser(username string) (wrapper Wrap, err error) {
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(username), nil, uint32(16)))
+	mwrapper, found := userlib.DatastoreGet(wuuid)
+	if !found {
+		return wrapper, errors.New(strings.ToTitle("Username not found!"))
 	}
-	userdata.setUser(wrapper)
-	return nil
+	err = json.Unmarshal(mwrapper, &wrapper)
+	if err != nil {
+		return wrapper, err
+	}
+	return wrapper, nil
 }
 
-func (userdata *User) allFile(filename string) (fileinfo FileInfo, file File, fKey []byte, err error) {
-	infouuid, ok := userdata.Files[filename]
+// Wesley you might want to use this
+// updateFilesMap updates the FilesMap for a new file or a new user to the file
+func (userdata *User) updateFilesMap(filename string, infouuid uuid.UUID, username string) {
+	var filesmap map[string]map[string]uuid.UUID
+	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
+	json.Unmarshal(mfilesmap, &filesmap)
+
+	_, ok := filesmap[filename]
 	if !ok {
-		return fileinfo, file, fKey, errors.New(strings.ToTitle("File not found!"))
+		filesmap[filename] = map[string]uuid.UUID{}
+		filesmap[filename][username] = infouuid
+	} else {
+		filesmap[filename][username] = infouuid
 	}
-	fileinfo, err = dinfo(infouuid)
+
+	mfilesmap, _ = json.Marshal(filesmap)
+	encmfilesmap = userlib.SymEnc(bHashKDF(userdata.SymKey, "fmap"), userlib.RandomBytes(16), mfilesmap)
+	userlib.DatastoreSet(userdata.FilesMap, encmfilesmap)
+}
+
+func (userdata *User) allFile(filename string) (fileinfo FileInfo, file File, err error) {
+	var filesmap map[string]map[string]uuid.UUID
+	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
+	json.Unmarshal(mfilesmap, &filesmap)
+
+	fileaccess, ok := filesmap[filename]
+	if !ok {
+		return fileinfo, file, errors.New(strings.ToTitle("File not found!"))
+	}
+	infouuid, ok := fileaccess[userdata.Username]
+	if !ok {
+		return fileinfo, file, errors.New(strings.ToTitle(userdata.Username + " does not have access to this file"))
+	}
+
+	encminfo, ok := userlib.DatastoreGet(infouuid)
+	if !ok {
+		return fileinfo, file, errors.New(strings.ToTitle("File Info not found!"))
+	}
+	minfo := userlib.SymDec(bHashKDF(userdata.SymKey, string(infouuid[:])), encminfo)
+	err = json.Unmarshal(minfo, &fileinfo)
 	if err != nil {
-		return fileinfo, file, fKey, err
+		return fileinfo, file, err
 	}
-	file, err = dfile(fileinfo.Fuuid)
+
+	mfile, ok := userlib.DatastoreGet(fileinfo.Fuuid)
+	if !ok {
+		return fileinfo, file, errors.New(strings.ToTitle("File not found!"))
+	}
+	err = json.Unmarshal(mfile, &file)
 	if err != nil {
-		return fileinfo, file, fKey, err
+		return fileinfo, file, err
 	}
-	fKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
-	return fileinfo, file, fKey, nil
+	return fileinfo, file, nil
 }
 
 // This creates a user.  It will only be called once for a user
@@ -261,10 +249,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var wrapper Wrap
 	userdataptr = &userdata
 
-	wrapper.Salt1 = userlib.RandomBytes(32)
-	wrapper.Salt2 = userlib.RandomBytes(32)
-	wrapper.Hashed = userlib.Argon2Key([]byte(username+password), wrapper.Salt1, uint32(32))
-
 	public, private, _ := userlib.PKEKeyGen()
 	sign, verify, _ := userlib.DSKeyGen()
 	err = userlib.KeystoreSet(string(username+"_enc"), public)
@@ -275,15 +259,30 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return nil, err
 	}
+	wrapper.Username = username
+	wrapper.Salt1 = userlib.RandomBytes(32)
+	wrapper.Hashed = userlib.Argon2Key([]byte(username+password), wrapper.Salt1, uint32(32))
+	wrapper.Salt2 = userlib.RandomBytes(16)
 
-	//TODO: This is a toy implementation.
 	userdata.Username = username
-	userdata.SymKey = userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(32))
+	userdata.SymKey = userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(16))
 	userdata.Private = private
 	userdata.Signature = sign
-	userdata.Files = make(map[string]uuid.UUID)
-	//End of toy implementation
-	userdataptr.setUser(wrapper)
+	userdata.FilesMap = uuid.New()
+
+	filesmap := map[string]map[string]uuid.UUID{}
+	mfilesmap, _ := json.Marshal(filesmap)
+	encmfilesmap := userlib.SymEnc(bHashKDF(userdata.SymKey, "fmap"), userlib.RandomBytes(16), mfilesmap)
+	userlib.DatastoreSet(userdata.FilesMap, encmfilesmap)
+
+	muserdata, _ := json.Marshal(userdata)
+	userkey := bHashKDF(userdata.SymKey, "user")
+	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
+
+	wrapper.EncUser = encuser
+	mwrapper, _ := json.Marshal(wrapper)
+	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), nil, uint32(16)))
+	userlib.DatastoreSet(wuuid, mwrapper)
 
 	return userdataptr, nil
 }
@@ -306,12 +305,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 	candidate := userlib.Argon2Key([]byte(username+password), wrapper.Salt1, uint32(32))
 	if !isEqual(candidate, wrapper.Hashed) {
-		return nil, errors.New(strings.ToTitle("Password is incorrect!"))
+		return userdataptr, errors.New(strings.ToTitle("Password is incorrect"))
 	}
 
-	userdata.SymKey = userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(32))
-	userdata.Username = username
-	err = userdataptr.refreshUser()
+	userkey := bHashKDF(userlib.Argon2Key([]byte(username+password), wrapper.Salt2, uint32(16)), "user")
+	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
+	err = json.Unmarshal(muserdata, &userdata)
 	if err != nil {
 		return nil, err
 	}
@@ -323,34 +322,26 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // The plaintext of the filename + the plaintext and length of the filename
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
-	userdata.refreshUser()
-	fileinfo, _, fKey, err := userdata.allFile(filename)
+	fileinfo, _, err := userdata.allFile(filename)
 	if err != nil {
-		fileinfo.FCsalt = userlib.RandomBytes(32)
-		fKey = userlib.Argon2Key([]byte(filename), fileinfo.FCsalt, uint32(32))
-		fileinfo.Fuuid, _ = uuid.FromBytes(bHashKDF(fKey, "fuuid"))
+		fileinfo.FKey = userlib.Argon2Key([]byte(filename), userlib.RandomBytes(16), uint32(16))
+		fileinfo.Fuuid = uuid.New()
+		infouuid := uuid.New()
+		minfo, _ := json.Marshal(fileinfo)
+		encinfo := userlib.SymEnc(bHashKDF(userdata.SymKey, string(infouuid[:])), userlib.RandomBytes(16), minfo)
+		userlib.DatastoreSet(infouuid, encinfo)
+		userdata.updateFilesMap(filename, infouuid, userdata.Username)
 	}
 
 	var file File
 
-	//TODO: This is a toy implementation.
-	encdata := userlib.SymEnc(bHashKDF(fKey, "file"), userlib.RandomBytes(16), data)
-	fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), encdata)
-	file.FMac = append(file.FMac, fmac)
-
+	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
 	file.Data = append(file.Data, encdata)
+	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "mac"), encdata)
+	file.Mac = append(file.Mac, fmac)
+
 	mfile, _ := json.Marshal(file)
-	var file2 File
-	json.Unmarshal(mfile, &file2)
 	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
-	//End of toy implementation
-
-	infouuid, _ := uuid.FromBytes(bHashKDF(fKey, "infouuid"))
-	userdata.Files[filename] = infouuid
-	minfo, _ := json.Marshal(fileinfo)
-	userlib.DatastoreSet(infouuid, minfo)
-
-	userdata.updateUser()
 
 	return
 }
@@ -361,20 +352,18 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // existing file, but only whatever additional information and
 // metadata you need.
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	userdata.refreshUser()
-	fileinfo, file, fKey, err := userdata.allFile(filename)
+	fileinfo, file, err := userdata.allFile(filename)
 	if err != nil {
 		return err
 	}
 
-	encdata := userlib.SymEnc(bHashKDF(fKey, "file"), userlib.RandomBytes(16), data)
-	fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), encdata)
-	file.FMac = append(file.FMac, fmac)
-
+	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
 	file.Data = append(file.Data, encdata)
+	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "mac"), encdata)
+	file.Mac = append(file.Mac, fmac)
+
 	mfile, _ := json.Marshal(file)
 	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
-	userdata.updateUser()
 
 	return nil
 }
@@ -383,17 +372,17 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 //
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
-	userdata.refreshUser()
-	_, file, fKey, err := userdata.allFile(filename)
+	fileinfo, file, err := userdata.allFile(filename)
 	if err != nil {
 		return nil, err
 	}
+
 	for i, datapart := range file.Data {
-		fmac, _ := userlib.HMACEval(bHashKDF(fKey, "fmac"), datapart)
-		if !userlib.HMACEqual(fmac, file.FMac[i]) {
+		fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "mac"), datapart)
+		if !userlib.HMACEqual(fmac, file.Mac[i]) {
 			return nil, errors.New(strings.ToTitle("File is corrupted"))
 		}
-		decdata := userlib.SymDec(bHashKDF(fKey, "file"), datapart)
+		decdata := userlib.SymDec(bHashKDF(fileinfo.FKey, "file"), datapart)
 		data = append(data, decdata...)
 	}
 	return data, nil
