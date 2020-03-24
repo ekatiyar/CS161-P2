@@ -105,6 +105,9 @@ type User struct {
 	Private   userlib.PKEDecKey
 	Signature userlib.DSSignKey
 	FilesMap  uuid.UUID
+	//for sharing
+	OwnFiles  map[string]uuid.UUID
+	OtherFile map[string]string
 }
 
 //Wrap struct is a wrapper containing a user instance and an auth struct
@@ -114,6 +117,17 @@ type Wrap struct {
 	Salt2    []byte
 	Hashed   []byte
 	EncUser  []byte //Encrypted User struct
+}
+
+//Redirect struct is used for sharing
+type Redirect struct {
+	Id uuid.UUID
+	DecKey userlib.PKEDecKey
+}
+
+type Signcheck struct {
+	Sign []byte
+	Magic string
 }
 
 func isEqual(one []byte, two []byte) bool {
@@ -343,6 +357,13 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	mfile, _ := json.Marshal(file)
 	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
 
+	//updates maps within user struct for sharing purpose
+	if userdata.OwnFiles == nil {
+		var m map[string]string
+		m := make(map[string]string)
+		userdata.OwnFiles := m
+	}
+	userdata.OwnFiles[filename]fileinfo.Fuuid
 	return
 }
 
@@ -400,8 +421,33 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 // should be able to know the sender.
 func (userdata *User) ShareFile(filename string, recipient string) (
 	magic_string string, err error) {
+	//magic_string is a marshaled struct with uuid hashed and converted to string, signature
+	rec_pk, err1 := kUser(recipient)
+	if err1 != nil {
+		return nil, err
+	}
+	elem, ok := userdata.OwnFiles[filename]
+	if ok == true {
+		//create share struct and encrypt it and share it
+		share := Redirect{Id: elem, DecKey: userdata.Private}
+		ms, ms_err := json.Marshal(share)
+		if ms_err != nil {
+			err := errors.New(strings.ToTitle("Marshal has issues at share")
+			return nil, err
+		}
+		//need to encrypt and sign
+		ms_enc, pk_err := PKEEnc(rec_pk, ms)
 
-	return
+	} else {
+		elem2, ok2 := userdata.OtherFile[filename]
+		if ok2 == true{
+			// add struct creation, signature
+			return elem2, nil
+		} else {
+			err := errors.New(strings.ToTitle("no access to file")
+			return nil, err)
+		}
+	}
 }
 
 // Note recipient's filename can be different from the sender's filename.
