@@ -417,27 +417,30 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 		return magic_string, nil
 	}
 	infowrapper, fileinfo, _, err := userdata.allFile(filename)
-	if err != nil {
+	if err == nil {
 		if fileinfo.Owner == true {
-			fileinfo.Fuuid = uuid.New()
 			fileinfo.Owner = false
+			infowrapper.Infouuid = uuid.New()
 			minfo, _ := json.Marshal(fileinfo)
-			bytes, err := uuidtobytes(fileinfo.Fuuid)
+			bytes, err := uuidtobytes(infowrapper.Infouuid)
 			if err != nil {
 				return magic_string, err
 			}
 			InfoKey := bHashKDF(userdata.SymKey, string(bytes))
 			encinfo := userlib.SymEnc(InfoKey, userlib.RandomBytes(16), minfo)
-			userlib.DatastoreSet(fileinfo.Fuuid, encinfo)
+			userlib.DatastoreSet(infowrapper.Infouuid, encinfo)
 
-			infowrapper.Infouuid = fileinfo.Fuuid
 			infowrapper.InfoKey = InfoKey
 			userdata.updateFilesMap(filename, infowrapper, recipient)
 
 		}
+
 		var share Share
 		minfowrapper, _ := json.Marshal(infowrapper)
-		encinfowrapper, _ := userlib.PKEEnc(ek, minfowrapper)
+		encinfowrapper, err := userlib.PKEEnc(ek, minfowrapper)
+		if err != nil {
+			return magic_string, err
+		}
 		share.EncInfoWrapper = encinfowrapper
 		signature, _ := userlib.DSSign(userdata.Signature, encinfowrapper)
 		share.Sign = signature
@@ -456,6 +459,27 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 // it is authentically from the sender.
 func (userdata *User) ReceiveFile(filename string, sender string,
 	magic_string string) error {
+	var share Share
+	err := json.Unmarshal([]byte(magic_string), &share)
+	if err != nil {
+		return err
+	}
+	vk, err := kVerify(sender)
+	if err != nil {
+		return err
+	}
+	err = userlib.DSVerify(vk, share.EncInfoWrapper, share.Sign)
+	if err != nil {
+		return err
+	}
+	minfowrapper, err := userlib.PKEDec(userdata.Private, share.EncInfoWrapper)
+	if err != nil {
+		return err
+	}
+	var infowrapper InfoWrapper
+	err = json.Unmarshal(minfowrapper, &infowrapper)
+
+	userdata.updateFilesMap(filename, infowrapper, userdata.Username)
 	return nil
 }
 
