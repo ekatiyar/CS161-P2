@@ -181,13 +181,19 @@ func dUser(username string) (wrapper Wrap, err error) {
 }
 
 // updateFilesMap updates the FilesMap for a new file or a new user to the file
-func (userdata *User) updateFilesMap(filename string, infowrapper InfoWrapper, username string) {
+func (userdata *User) updateFilesMap(filename string, infowrapper InfoWrapper, username string) (err error) {
 	var filesmap map[string]map[string]InfoWrapper
-	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	encmfilesmap, ok := userlib.DatastoreGet(userdata.FilesMap)
+	if !ok {
+		return errors.New(strings.ToTitle("Unable to load filesmap"))
+	}
 	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
-	json.Unmarshal(mfilesmap, &filesmap)
+	err = json.Unmarshal(mfilesmap, &filesmap)
+	if err != nil {
+		return err
+	}
 
-	_, ok := filesmap[filename]
+	_, ok = filesmap[filename]
 	if !ok {
 		filesmap[filename] = map[string]InfoWrapper{}
 	}
@@ -196,13 +202,20 @@ func (userdata *User) updateFilesMap(filename string, infowrapper InfoWrapper, u
 	mfilesmap, _ = json.Marshal(filesmap)
 	encmfilesmap = userlib.SymEnc(bHashKDF(userdata.SymKey, "fmap"), userlib.RandomBytes(16), mfilesmap)
 	userlib.DatastoreSet(userdata.FilesMap, encmfilesmap)
+	return nil
 }
 
 func (userdata *User) allFile(filename string) (infowrapper InfoWrapper, fileinfo FileInfo, file File, err error) {
 	var filesmap map[string]map[string]InfoWrapper
-	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	encmfilesmap, ok := userlib.DatastoreGet(userdata.FilesMap)
+	if !ok {
+		return infowrapper, fileinfo, file, errors.New(strings.ToTitle("InfoWrapper not found"))
+	}
 	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
-	json.Unmarshal(mfilesmap, &filesmap)
+	err = json.Unmarshal(mfilesmap, &filesmap)
+	if err != nil {
+		return infowrapper, fileinfo, file, err
+	}
 
 	fileaccess, ok := filesmap[filename]
 	if !ok {
@@ -342,7 +355,10 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		var temp InfoWrapper
 		temp.Infouuid = infouuid
 		temp.InfoKey = InfoKey
-		userdata.updateFilesMap(filename, temp, userdata.Username)
+		err = userdata.updateFilesMap(filename, temp, userdata.Username)
+		if err != nil {
+			return
+		}
 	}
 
 	var file File
@@ -430,8 +446,10 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 			userlib.DatastoreSet(infowrapper.Infouuid, encinfo)
 
 			infowrapper.InfoKey = InfoKey
-			userdata.updateFilesMap(filename, infowrapper, recipient)
-
+			err = userdata.updateFilesMap(filename, infowrapper, recipient)
+			if err != nil {
+				return magic_string, err
+			}
 		}
 
 		var share Share
@@ -477,18 +495,29 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	}
 	var infowrapper InfoWrapper
 	err = json.Unmarshal(minfowrapper, &infowrapper)
-
-	userdata.updateFilesMap(filename, infowrapper, userdata.Username)
+	if err != nil {
+		return err
+	}
+	err = userdata.updateFilesMap(filename, infowrapper, userdata.Username)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 func (userdata *User) mapRevoke(filename string, target_username string) (newWrapperMap map[string]InfoWrapper, err error) {
 	var filesmap map[string]map[string]InfoWrapper
-	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	encmfilesmap, ok := userlib.DatastoreGet(userdata.FilesMap)
+	if !ok {
+		return newWrapperMap, errors.New(strings.ToTitle("Filesmap not found!"))
+	}
 	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
-	json.Unmarshal(mfilesmap, &filesmap)
+	err = json.Unmarshal(mfilesmap, &filesmap)
+	if err != nil {
+		return newWrapperMap, err
+	}
 
-	newWrapperMap, ok := filesmap[filename]
+	newWrapperMap, ok = filesmap[filename]
 	if !ok {
 		filesmap[filename] = map[string]InfoWrapper{}
 	}

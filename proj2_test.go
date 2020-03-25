@@ -204,7 +204,6 @@ func TestStorage(t *testing.T) {
 
 	v := []byte("This is a test")
 	u.StoreFile("file1", v)
-
 	v2, err2 := u.LoadFile("file1")
 	if err2 != nil {
 		t.Error("Failed to upload and download", err2)
