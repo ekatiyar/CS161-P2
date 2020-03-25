@@ -227,7 +227,7 @@ func (userdata *User) allFile(filename string) (infowrapper InfoWrapper, fileinf
 	}
 
 	encminfo, ok := userlib.DatastoreGet(infowrapper.Infouuid)
-	if !ok {
+	if !ok || len(encminfo) < 32 {
 		return infowrapper, fileinfo, file, errors.New(strings.ToTitle("File Info not found!"))
 	}
 	minfo := userlib.SymDec(infowrapper.InfoKey, encminfo)
