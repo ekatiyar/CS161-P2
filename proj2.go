@@ -180,7 +180,6 @@ func dUser(username string) (wrapper Wrap, err error) {
 	return wrapper, nil
 }
 
-// Wesley you might want to use this
 // updateFilesMap updates the FilesMap for a new file or a new user to the file
 func (userdata *User) updateFilesMap(filename string, infowrapper InfoWrapper, username string) {
 	var filesmap map[string]map[string]InfoWrapper
@@ -483,7 +482,72 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	return nil
 }
 
+func (userdata *User) mapRevoke(filename string, target_username string) (newWrapperMap map[string]InfoWrapper, err error) {
+	var filesmap map[string]map[string]InfoWrapper
+	encmfilesmap, _ := userlib.DatastoreGet(userdata.FilesMap)
+	mfilesmap := userlib.SymDec(bHashKDF(userdata.SymKey, "fmap"), encmfilesmap)
+	json.Unmarshal(mfilesmap, &filesmap)
+
+	newWrapperMap, ok := filesmap[filename]
+	if !ok {
+		filesmap[filename] = map[string]InfoWrapper{}
+	}
+	_, ok = newWrapperMap[target_username]
+	if !ok {
+		return newWrapperMap, errors.New(strings.ToTitle(target_username + " does not have access to this file"))
+	}
+	delete(newWrapperMap, target_username)
+	filesmap[filename] = newWrapperMap
+
+	mfilesmap, _ = json.Marshal(filesmap)
+	encmfilesmap = userlib.SymEnc(bHashKDF(userdata.SymKey, "fmap"), userlib.RandomBytes(16), mfilesmap)
+	userlib.DatastoreSet(userdata.FilesMap, encmfilesmap)
+	return newWrapperMap, nil
+}
+
 // Removes target user's access.
 func (userdata *User) RevokeFile(filename string, target_username string) (err error) {
-	return
+	infowrapper, fileinfo, file, err := userdata.allFile(filename)
+	if err != nil {
+		return err
+	}
+	data, err := userdata.LoadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	fileinfo.FKey = userlib.Argon2Key([]byte(filename), userlib.RandomBytes(16), uint32(16))
+	minfo, _ := json.Marshal(fileinfo)
+	encinfo := userlib.SymEnc(infowrapper.InfoKey, userlib.RandomBytes(16), minfo)
+	userlib.DatastoreSet(infowrapper.Infouuid, encinfo)
+
+	encdata := userlib.SymEnc(bHashKDF(fileinfo.FKey, "file"), userlib.RandomBytes(16), data)
+	file.Data = append([][]byte(nil), encdata)
+	fmac, _ := userlib.HMACEval(bHashKDF(fileinfo.FKey, "mac"), encdata)
+	file.Mac = append([][]byte(nil), fmac)
+	mfile, _ := json.Marshal(file)
+	userlib.DatastoreSet(fileinfo.Fuuid, mfile)
+
+	wrappermap, err := userdata.mapRevoke(filename, target_username)
+	if err != nil {
+		return err
+	}
+
+	var recfileinfo FileInfo
+	for _, recwrapper := range wrappermap {
+		encminfo, ok := userlib.DatastoreGet(recwrapper.Infouuid)
+		if !ok {
+			return errors.New(strings.ToTitle("File Info not found!"))
+		}
+		minfo := userlib.SymDec(recwrapper.InfoKey, encminfo)
+		err = json.Unmarshal(minfo, &recfileinfo)
+		if err != nil {
+			return err
+		}
+		recfileinfo.FKey = fileinfo.FKey
+		minfo, _ = json.Marshal(recfileinfo)
+		encinfo = userlib.SymEnc(recwrapper.InfoKey, userlib.RandomBytes(16), minfo)
+		userlib.DatastoreSet(recwrapper.Infouuid, encinfo)
+	}
+	return nil
 }
