@@ -492,10 +492,11 @@ func (userdata *User) mapRevoke(filename string, target_username string) (newWra
 	if !ok {
 		filesmap[filename] = map[string]InfoWrapper{}
 	}
-	_, ok = newWrapperMap[target_username]
+	targwrapper, ok := newWrapperMap[target_username]
 	if !ok {
 		return newWrapperMap, errors.New(strings.ToTitle(target_username + " does not have access to this file"))
 	}
+	userlib.DatastoreDelete(targwrapper.Infouuid)
 	delete(newWrapperMap, target_username)
 	filesmap[filename] = newWrapperMap
 
