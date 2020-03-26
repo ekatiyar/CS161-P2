@@ -85,6 +85,22 @@ func TestInvalidInit(t *testing.T) {
 	}
 }
 
+//test two users with same username
+func TestSameUsernameInit(t *testing.T) {
+	clear()
+	t.Log("Initializing two users with same username")
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	_, err = InitUser("alice", "acorn")
+	if err == nil {
+		t.Error("Failed to catch redundant username")
+		return
+	}
+}
 func TestGet(t *testing.T) {
 	clear()
 	t.Log("Get test")
@@ -304,6 +320,81 @@ func TestShare(t *testing.T) {
 	}
 }
 
+//test modify file after sharing
+func TestshareAppend(t *testing.T) {
+	clear()
+	t.Log("Share test")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	err = u2.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	apple := []byte("!")
+	u2.AppendFile("file2", apple)
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+	final := []byte("This is a test!")
+	v2, err2 := u.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
+		return
+	}
+	if !reflect.DeepEqual(final, v2) {
+		t.Error("Downloaded file is not the same", v, v2)
+		return
+	}
+}
+
+//test share to self (failed)
+func TestSharetoSelf(t *testing.T) {
+	clear()
+	t.Log("Share test to self")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	var magic_string string
+	magic_string, err = u.ShareFile("file1", "alice")
+	if err == nil {
+		t.Error("Failed to catch self sharing", err)
+		return
+	}
+	err = u.ReceiveFile("file2", "alice", magic_string)
+}
+
+//test share to second instantiation
+//test share to dummy user
+//test update after revoke
+//revoke user without access
+//revoke called by nonoriginal author
+//other non revoked users try to update file/load file
+//two instantiations receive twice
 func TestRevoke(t *testing.T) {
 	clear()
 	clear()
