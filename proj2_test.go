@@ -101,6 +101,7 @@ func TestSameUsernameInit(t *testing.T) {
 		return
 	}
 }
+
 func TestGet(t *testing.T) {
 	clear()
 	t.Log("Get test")
@@ -256,6 +257,47 @@ func TestAppend(t *testing.T) {
 	}
 }
 
+//test second instantiation store and edit
+func TestSameAppend(t *testing.T) {
+	clear()
+	t.Log("Get test")
+
+	// You can set this to false!
+	userlib.SetDebugStatus(true)
+
+	u1, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+	u3, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user again", err)
+		return
+	}
+	v := []byte("This is a test")
+	u1.StoreFile("file1", v)
+	vmore := []byte("!")
+	u2.AppendFile("file1", vmore)
+	u3.AppendFile("file1", vmore)
+	final := []byte("This is a test!!")
+	v2, err2 := u1.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
+		return
+	}
+	if !reflect.DeepEqual(final, v2) {
+		t.Error("Downloaded file is not the same", v, v2)
+		return
+	}
+}
+
 func TestInvalidFile(t *testing.T) {
 	clear()
 	t.Log("Invalid File test")
@@ -368,33 +410,273 @@ func TestshareAppend(t *testing.T) {
 	}
 }
 
-//test share to self (failed)
-func TestSharetoSelf(t *testing.T) {
+//test share to dummy user
+func TestRevokeDummy(t *testing.T) {
 	clear()
-	t.Log("Share test to self")
+	t.Log("Share test")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("dummy", "foo")
+	if err3 != nil {
+		t.Error("Failed to initialize dummy", err3)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+	var magic_string2 string
+
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	err = u2.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	magic_string2, err = u2.ShareFile("file2", "dummy")
+	if err != nil {
+		t.Error("Failed to receive the share message to dummy", err)
+		return
+	}
+	err = u3.ReceiveFile("file3", "bob", magic_string2)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	err = u.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to revoke file", err)
+	}
+
+	_, err = u3.LoadFile("file3")
+	if err == nil {
+		t.Error("Still was able to download the file after revoke")
+		return
+	}
+	v3 := []byte("This is a test")
+	err = u3.AppendFile("file3", v3)
+	if err == nil {
+		t.Error("still updates after revoke", err)
+		return
+	}
+}
+
+//revoke called by nonoriginal author
+func TestNonOgRevoke(t *testing.T) {
+	clear()
+	t.Log("Share test")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("dummy", "foo")
+	if err3 != nil {
+		t.Error("Failed to initialize dummy", err3)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+	var magic_string2 string
+
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	err = u2.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	magic_string2, err = u2.ShareFile("file2", "dummy")
+	if err != nil {
+		t.Error("Failed to receive the share message to dummy", err)
+		return
+	}
+	err = u3.ReceiveFile("file3", "bob", magic_string2)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	err = u2.RevokeFile("file2", "dummy")
+	if err == nil {
+		t.Error("u2 shouldn't be able to revoke", err)
+	}
+
+	_, err = u3.LoadFile("file3")
+	if err != nil {
+		t.Error("should have access")
+		return
+	}
+	v3 := []byte("This is a test")
+	err = u3.AppendFile("file3", v3)
+	if err != nil {
+		t.Error("should still update after revoke", err)
+		return
+	}
+}
+
+//other non revoked users try to update file/load file
+func TestMultiRevoke(t *testing.T) {
+	clear()
+	t.Log("Share test")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("cat", "c")
+	if err3 != nil {
+		t.Error("Failed to initialize cat")
+		return
+	}
+	u4, err4 := InitUser("dummy", "d")
+	if err4 != nil {
+		t.Error("Failed to initialized dummy")
+		return
+	}
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	var magic_string string
+	var magic_string2 string
+	var magic_string3 string
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("sharing failed bob", err)
+		return
+	}
+	magic_string2, err = u.ShareFile("file1", "cat")
+	if err != nil {
+		t.Error("sharing failed cat", err)
+		return
+	}
+	magic_string3, err = u.ShareFile("file1", "dummy")
+	if err != nil {
+		t.Error("sharing failed dummy", err)
+	}
+	err = u2.ReceiveFile("file1", "alice", magic_string)
+	if err != nil {
+		t.Error("bob Failed to receive the share message", err)
+		return
+	}
+	err = u3.ReceiveFile("file1", "alice", magic_string2)
+	if err != nil {
+		t.Error("cat Failed to receive", err)
+		return
+	}
+	err = u4.ReceiveFile("file1", "alice", magic_string3)
+	if err != nil {
+		t.Error("dummy failed to receive", err)
+		return
+	}
+	err = u.RevokeFile("file1", "dummy")
+	if err != nil {
+		t.Error("failed to revoke dummy", err)
+		return
+	}
+	v3 := []byte("!")
+	err = u2.AppendFile("file1", v3)
+	if err != nil {
+		t.Error("bob can't append", err)
+		return
+	}
+	catfile, errload := u3.LoadFile("file1")
+	if errload != nil {
+		t.Error("cat should have access", err)
+		return
+	}
+	ogfile, ogerr := u.LoadFile("file1")
+	if ogerr != nil {
+		t.Error("alice can't load", err)
+		return
+	}
+	eq := reflect.DeepEqual(ogfile, catfile)
+	if !eq {
+		t.Error("file not synchronized")
+		return
+	}
+}
+
+//magic string gets modified
+func TestMagicMod(t *testing.T) {
+	clear()
+	t.Log("Magic string modification test")
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	magic_string = "aaaa"
+	err = u2.ReceiveFile("file1", "alice", magic_string)
+	if err == nil {
+		t.Error("Failed to catch wrong magic_string", err)
+		return
+	}
+}
+
+//empty filename
+func TestEmptyFileName(t *testing.T) {
+	clear()
+	t.Log("Empty Filename test")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)
 		return
 	}
 	v := []byte("This is a test")
-	u.StoreFile("file1", v)
-	var magic_string string
-	magic_string, err = u.ShareFile("file1", "alice")
-	if err == nil {
-		t.Error("Failed to catch self sharing", err)
+	u.StoreFile("", v)
+	var download []byte
+	download, err = u.LoadFile("")
+	eq := reflect.DeepEqual(download, v)
+	if !eq {
+		t.Error("fails to load empty file")
 		return
 	}
-	err = u.ReceiveFile("file2", "alice", magic_string)
 }
-
-//test share to second instantiation
-//test share to dummy user
-//test update after revoke
-//revoke user without access
-//revoke called by nonoriginal author
-//other non revoked users try to update file/load file
-//two instantiations receive twice
 func TestRevoke(t *testing.T) {
 	clear()
 	clear()
