@@ -567,6 +567,11 @@ func TestShare(t *testing.T) {
 		t.Error("cannot double receive", err)
 		return
 	}
+	magic_string, err = u2.ShareFile("", "alice")
+	if err == nil {
+		t.Error("failed to catch nonexistent file", err)
+		return
+	}
 }
 
 //test share cycle
@@ -637,6 +642,7 @@ func TestShareCycle(t *testing.T) {
 	if err == nil {
 		t.Error("File Status updated not og author anymore", err)
 	}
+
 }
 
 //test modify file after sharing
@@ -748,6 +754,11 @@ func TestRevokeDummy(t *testing.T) {
 	err = u3.AppendFile("file3", v3)
 	if err == nil {
 		t.Error("still updates after revoke", err)
+		return
+	}
+	err = u2.AppendFile("file2", v)
+	if err == nil {
+		t.Error("still appends after revoke", err)
 		return
 	}
 }
@@ -899,6 +910,28 @@ func TestMultiRevoke(t *testing.T) {
 	eq := reflect.DeepEqual(ogfile, catfile)
 	if !eq {
 		t.Error("file not synchronized")
+		return
+	}
+	v4 := []byte("!!!")
+	u.StoreFile("file2", v4)
+	magic_string, err = u.ShareFile("file2", "dummy")
+	if err != nil {
+		t.Error("Failed to share second file", err)
+		return
+	}
+	err = u.RevokeFile("file2", "dummy")
+	if err != nil {
+		t.Error("failed to revoke dummy again")
+		return
+	}
+	nilerr := u4.ReceiveFile("file2", "alice", magic_string)
+	if nilerr != nil {
+		t.Error("receiving should be allowed?")
+		return
+	}
+	ogfile, ogerr = u4.LoadFile("file2")
+	if ogerr == nil {
+		t.Error("dummy can load", err)
 		return
 	}
 }
