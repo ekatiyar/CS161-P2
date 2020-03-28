@@ -22,14 +22,6 @@ func clear() {
 	userlib.KeystoreClear()
 }
 
-func mix() {
-	dsmap := userlib.DatastoreGetMap()
-	randomitem := userlib.RandomBytes(16)
-	for i, _ := range dsmap {
-		userlib.DatastoreSet(i, randomitem)
-	}
-}
-
 func TestInit(t *testing.T) {
 	clear()
 	t.Log("Initialization test")
@@ -48,6 +40,13 @@ func TestInit(t *testing.T) {
 	// If you want to comment the line above,
 	// write _ = u here to make the compiler happy
 	// You probably want many more tests here.
+	var junk User
+	v := []byte("This is a test")
+	err = junk.AppendFile("file1", v)
+	if err == nil {
+		t.Error("failed to catch uninitialized user", err)
+		return
+	}
 }
 
 func TestDoubleInit(t *testing.T) {
@@ -170,6 +169,14 @@ func TestInvalidGet(t *testing.T) {
 	if err == nil {
 		t.Error("Failed to catch empty username")
 		return
+	}
+}
+
+func mix() {
+	dsmap := userlib.DatastoreGetMap()
+	randomitem := userlib.RandomBytes(16)
+	for i, _ := range dsmap {
+		userlib.DatastoreSet(i, randomitem)
 	}
 }
 
@@ -395,6 +402,19 @@ func TestAppend(t *testing.T) {
 	}
 	if !reflect.DeepEqual(final, v2) {
 		t.Error("Downloaded file is not the same", v, v2)
+		return
+	}
+	u2, err := InitUser("bob", "b")
+	if err != nil {
+		t.Error("failed to initialized bob", err)
+		return
+	}
+	u2.StoreFile("file1", vmore)
+	falsename := "alice"
+	u2.Username = falsename
+	err = u2.AppendFile("file1", vmore)
+	if err == nil {
+		t.Error("wrong name should error", err)
 		return
 	}
 }
@@ -914,6 +934,11 @@ func TestEmptyFileName(t *testing.T) {
 	eq := reflect.DeepEqual(download, v)
 	if !eq {
 		t.Error("fails to load empty file")
+		return
+	}
+	err = u.AppendFile("", v)
+	if err != nil {
+		t.Error("failed to append empty name file")
 		return
 	}
 }
