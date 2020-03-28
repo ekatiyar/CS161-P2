@@ -233,8 +233,15 @@ func TestDataStore(t *testing.T) {
 	if !equiv {
 		t.Error("Failed to get correct user", err)
 	}
+	v := []byte("This is a test")
+	u1.StoreFile("file1", v)
+	mix()
+	err = u1.AppendFile("file1", v)
+	if err == nil {
+		t.Error("failed to catch corruption", err)
+		return
+	}
 
-	t.Log("Get works!", u2)
 }
 
 func TestMixAfterLoad(t *testing.T) {
@@ -548,6 +555,16 @@ func TestShare(t *testing.T) {
 	}
 	if !reflect.DeepEqual(v, v2) {
 		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+	err = u2.ReceiveFile("file3", "cat", magic_string)
+	if err == nil {
+		t.Error("failed to catch invalid sharer")
+		return
+	}
+	err = u2.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("cannot double receive", err)
 		return
 	}
 }
@@ -1030,9 +1047,15 @@ func TestOneUserTwoFileRevoke(t *testing.T) {
 		t.Error("Failed to receive the share message", err)
 		return
 	}
+	err = u2.AppendFile("file4", v1)
+	if err != nil {
+		t.Error("failed to revoke file", err)
+		return
+	}
 	err = u.RevokeFile("file1", "bob")
 	if err != nil {
 		t.Error("Failed to revoke file", err)
+		return
 	}
 	_, err = u2.LoadFile("file4")
 	if err != nil {
