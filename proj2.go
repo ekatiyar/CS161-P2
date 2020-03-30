@@ -123,6 +123,7 @@ type User struct {
 //Wrap struct is a wrapper containing a user instance and an auth struct
 type Wrap struct {
 	Salt    []byte
+	MAC     []byte
 	EncUser []byte //Encrypted User struct
 }
 
@@ -303,6 +304,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	encuser := userlib.SymEnc(userkey, userlib.RandomBytes(16), muserdata)
 
 	wrapper.EncUser = encuser
+	wrapper.MAC, err = userlib.HMACEval(bHashKDF(userdata.SymKey, "usermac"), encuser)
+	if err != nil {
+		return userdataptr, nil
+	}
 	mwrapper, _ := json.Marshal(wrapper)
 	wuuid, _ := uuid.FromBytes(userlib.Argon2Key([]byte(userdata.Username), nil, uint32(16)))
 	userlib.DatastoreSet(wuuid, mwrapper)
@@ -326,7 +331,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	userkey := bHashKDF(userlib.Argon2Key([]byte(username+password), wrapper.Salt, uint32(16)), "user")
+	symkey := userlib.Argon2Key([]byte(username+password), wrapper.Salt, uint32(16))
+	userkey := bHashKDF(symkey, "user")
+	cmac, err := userlib.HMACEval(bHashKDF(symkey, "usermac"), wrapper.EncUser)
+	if err != nil || !userlib.HMACEqual(wrapper.MAC, cmac) {
+		return userdataptr, nil
+	}
 	muserdata := userlib.SymDec(userkey, wrapper.EncUser)
 	err = json.Unmarshal(muserdata, &userdata)
 	if err != nil {
