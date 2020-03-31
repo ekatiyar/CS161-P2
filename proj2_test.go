@@ -424,6 +424,23 @@ func TestAppend(t *testing.T) {
 		t.Error("wrong name should error", err)
 		return
 	}
+	u2.StoreFile("file3", vmore)
+	err = u2.AppendFile("file3", vmore)
+	if err != nil {
+		t.Error("wrong name should error", err)
+		return
+	}
+	var magic_string string
+	magic_string, err = u2.ShareFile("file1", "alice")
+	if err == nil {
+		t.Error("should not share file", err)
+		return
+	}
+	err = u.ReceiveFile("file1", "bob", magic_string)
+	if err == nil {
+		t.Error("should not share file", err)
+		return
+	}
 }
 
 func TestBigAppend(t *testing.T) {
@@ -570,6 +587,11 @@ func TestShare(t *testing.T) {
 	magic_string, err = u2.ShareFile("", "alice")
 	if err == nil {
 		t.Error("failed to catch nonexistent file", err)
+		return
+	}
+	magic_string, err = u.ShareFile("file2", "bob")
+	if err == nil {
+		t.Error("shouldn't share file that dne", err)
 		return
 	}
 }
@@ -761,6 +783,11 @@ func TestRevokeDummy(t *testing.T) {
 		t.Error("still appends after revoke", err)
 		return
 	}
+	err = u.RevokeFile("file1", "bob")
+	if err == nil {
+		t.Error("failed to catch double revoke", err)
+	}
+
 }
 
 //revoke called by nonoriginal author
@@ -884,6 +911,11 @@ func TestMultiRevoke(t *testing.T) {
 	err = u4.ReceiveFile("file1", "alice", magic_string3)
 	if err != nil {
 		t.Error("dummy failed to receive", err)
+		return
+	}
+	err = u4.ReceiveFile("file2", "alice", magic_string)
+	if err == nil {
+		t.Error("failed to catch using other magic string", err)
 		return
 	}
 	err = u.RevokeFile("file1", "dummy")
