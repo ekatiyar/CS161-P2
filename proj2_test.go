@@ -47,6 +47,11 @@ func TestInit(t *testing.T) {
 		t.Error("failed to catch uninitialized user", err)
 		return
 	}
+	_, ok := userlib.KeystoreGet("alice" + "_enc")
+	if !ok {
+		t.Error("cant get key", err)
+		return
+	}
 }
 
 func TestDoubleInit(t *testing.T) {
@@ -386,6 +391,12 @@ func TestStorage(t *testing.T) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
 	}
+	u.StoreFile("file1", v)
+	v2, err2 = u.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
+		return
+	}
 }
 
 func TestAppend(t *testing.T) {
@@ -467,6 +478,20 @@ func TestBigAppend(t *testing.T) {
 	}
 	if reflect.DeepEqual(v, v2) {
 		t.Error("no change", v, v2)
+		return
+	}
+	v = []byte("")
+	u.StoreFile("file2", v)
+	v2, err2 = u.LoadFile("file2")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
+		return
+	}
+	v = []byte{}
+	u.StoreFile("file3", v)
+	v2, err2 = u.LoadFile("file3")
+	if err2 != nil {
+		t.Error("Failed to upload and download", err2)
 		return
 	}
 }
@@ -594,6 +619,22 @@ func TestShare(t *testing.T) {
 		t.Error("shouldn't share file that dne", err)
 		return
 	}
+	magic_string, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	err = u2.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	err = u2.ReceiveFile("file2", "pops", magic_string)
+	if err == nil {
+		t.Error("Failed catch null user", err)
+		return
+	}
+
 }
 
 //test share cycle
@@ -1038,6 +1079,11 @@ func TestRevoke(t *testing.T) {
 		t.Error("Failed to initialize bob", err2)
 		return
 	}
+	u3, err3 := InitUser("cat", "c")
+	if err3 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
 
 	v := []byte("This is a test")
 	u.StoreFile("file1", v)
@@ -1055,19 +1101,36 @@ func TestRevoke(t *testing.T) {
 		t.Error("Failed to share the a file", err)
 		return
 	}
-	err = u2.ReceiveFile("file2", "alice", magic_string)
+	err = u2.ReceiveFile("file1", "alice", magic_string)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
+		return
+	}
+	magic_string, err = u.ShareFile("file1", "cat")
+	if err != nil {
+		t.Error("Failed to share to u3", err)
+		return
+	}
+	err = u3.ReceiveFile("file3", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive from alice", err)
 		return
 	}
 	err = u.RevokeFile("file1", "bob")
 	if err != nil {
 		t.Error("Failed to revoke file", err)
+		return
 	}
-
-	_, err = u2.LoadFile("file2")
+	_, err = u2.LoadFile("file1")
 	if err == nil {
 		t.Error("Still was able to download the file after revoke")
+		return
+	}
+	falsename := "alice"
+	u2.Username = falsename
+	err = u2.RevokeFile("file1", "cat")
+	if err == nil {
+		t.Error("failed to catch faking as u1", err)
 		return
 	}
 }
